@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 
@@ -10,11 +11,24 @@ _UA = (
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 
+_BROWSER_HEADERS = {
+    "User-Agent": _UA,
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Upgrade-Insecure-Requests": "1",
+}
+
 # The video page embeds all media metadata in this hydration blob.
 _UNIVERSAL_DATA_RE = re.compile(
     r'<script[^>]+\bid="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>(.*?)</script>',
     re.DOTALL,
 )
+
+# TikTok only serves the hydration blob to "warmed" sessions that carry the
+# cookies its homepage hands out over a few requests.
 
 
 class TikTokExtractor(BaseExtractor):
@@ -22,17 +36,15 @@ class TikTokExtractor(BaseExtractor):
         return "tiktok.com" in url
 
     async def extract_info(self, url: str) -> MediaInfo:
-        item, page_url, cookies = await self._fetch_item(url)
+        item, page_url = await self._fetch_item(url)
 
         video = item.get("video") or {}
         title = (item.get("desc") or "TikTok Video").strip()[:80] or "TikTok Video"
         thumbnail = self._first_url(video, ("cover", "originCover", "dynamicCover")) or ""
         duration = int(video.get("duration") or 0)
 
-        # CDN needs a Referer; some URLs also need the cookies the page set.
+        # The CDN only needs Referer + UA; sending the session Cookie triggers a 403.
         cdn_headers = {"Referer": page_url, "User-Agent": _UA}
-        if cookies:
-            cdn_headers["Cookie"] = cookies
 
         video_url, filesize = self._best_video(video)
 
@@ -64,17 +76,33 @@ class TikTokExtractor(BaseExtractor):
             formats=formats, duration=duration or None,
         )
 
-    async def _fetch_item(self, url: str) -> tuple[dict, str, str]:
-        headers = {
-            "User-Agent": _UA,
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        }
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers=headers) as client:
+    async def _warm(self, client: httpx.AsyncClient) -> None:
+        """Hit the homepage a few times so TikTok hands out the cookies that unlock video data."""
+        for _ in range(4):
+            try:
+                await client.get("https://www.tiktok.com/")
+            except httpx.HTTPError:
+                return
+            if client.cookies.get("msToken"):
+                return
+            await asyncio.sleep(0.5)
+
+    async def _fetch_item(self, url: str) -> tuple[dict, str]:
+        async with httpx.AsyncClient(timeout=25, follow_redirects=True,
+                                     headers=_BROWSER_HEADERS) as client:
+            await self._warm(client)
+
             r = await client.get(url)
             r.raise_for_status()
+
+            # A challenged/cold session returns a page without the hydration blob.
+            # Re-warm once and retry before giving up.
+            if "__UNIVERSAL_DATA_FOR_REHYDRATION__" not in r.text:
+                await self._warm(client)
+                r = await client.get(url)
+                r.raise_for_status()
+
             page_url = str(r.url)
-            cookie_header = "; ".join(f"{c.name}={c.value}" for c in client.cookies.jar)
 
         m = _UNIVERSAL_DATA_RE.search(r.text)
         if not m:
@@ -98,7 +126,7 @@ class TikTokExtractor(BaseExtractor):
         item = (detail.get("itemInfo") or {}).get("itemStruct")
         if not item:
             raise ValueError("No media found for this TikTok link")
-        return item, page_url, cookie_header
+        return item, page_url
 
     def _best_video(self, video: dict) -> tuple[str, int | None]:
         """Pick the highest-quality watermark-free stream from bitrateInfo / playAddr."""
