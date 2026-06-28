@@ -1,15 +1,20 @@
-import asyncio
-import json
+import random
 import re
+import urllib.parse
 
 import httpx
 
 from .base import BaseExtractor, Format, MediaInfo
 
-# Twitch web player client ID (from yt-dlp)
+# Public web-player client ID used by Twitch's own site.
 _CLIENT_ID = "ue6666qo983tsx6so1t0vnawi233wa"
 
 _GQL = "https://gql.twitch.tv/gql"
+_USHER = "https://usher.ttvnw.net"
+
+# Persisted GraphQL query hashes Twitch's web client uses.
+_VIDEO_METADATA_HASH = "45111672eea2e507f8ba44d101a61862f9c56b11dee09a15634cb75cb9b9084d"
+_SHARE_CLIP_HASH = "0a02bb974443b576f5579aab0fef1d4b7f44e58a8a256f0c5adfead0db70640f"
 
 
 class TwitchExtractor(BaseExtractor):
@@ -23,50 +28,35 @@ class TwitchExtractor(BaseExtractor):
             return await self._vod_info(url)
         raise ValueError("Unsupported Twitch URL. Paste a VOD (/videos/...) or clip URL.")
 
-    # ── VOD (via yt-dlp — usher.twitchapps.com doesn't resolve universally) ──
+    # ── VOD ────────────────────────────────────────────────────────────────────
 
     async def _vod_info(self, url: str) -> MediaInfo:
-        proc = await asyncio.create_subprocess_exec(
-            "yt-dlp", "--dump-json", "--no-download", "--quiet", "--no-warnings",
-            url,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
-        if proc.returncode != 0:
-            raise ValueError(f"Could not extract Twitch VOD: {stderr.decode(errors='replace')[:200]}")
+        vod_id = self._parse_vod_id(url)
 
-        data = json.loads(stdout)
-        title = data.get("title") or "Twitch VOD"
-        thumbnail = data.get("thumbnail", "")
-        duration = data.get("duration")
-        vod_duration: int = int(duration) if duration else 0
+        meta = await self._video_metadata(vod_id)
+        title = meta.get("title") or "Twitch VOD"
+        thumbnail = meta.get("previewThumbnailURL") or ""
+        length = meta.get("lengthSeconds") or 0
+        vod_duration = int(length) if length else 0
 
-        raw = [
-            f for f in data.get("formats", [])
-            if f.get("protocol") in ("m3u8", "m3u8_native")
-            and f.get("vcodec", "none") != "none"
-            and f.get("acodec", "none") != "none"
-        ]
-        raw.sort(key=lambda f: f.get("height") or 0, reverse=True)
+        # A signed access token unlocks the usher HLS master playlist.
+        token = await self._access_token(vod_id)
+        master = await self._fetch_usher(vod_id, token["value"], token["signature"])
+        variants = self._parse_master_m3u8(master)
+        if not variants:
+            raise ValueError("No downloadable qualities found for this VOD")
 
         formats: list[Format] = []
-        seen: set[str] = set()
-        for f in raw:
-            fid = f["format_id"]
-            if fid in seen:
-                continue
-            seen.add(fid)
-            height = f.get("height") or 0
-            fps = f.get("fps") or 30
-            label = f"MP4 {height}p" + (f" {int(fps)}fps" if fps > 30 else "")
-            tbr = f.get("tbr") or 0
-            fsize: int | None = int(tbr * 1000 / 8 * vod_duration) if tbr and vod_duration else None
+        for v in variants:
+            if v["height"] <= 0:
+                continue  # audio-only rendition, used for MP3 below
+            label = f"MP4 {v['height']}p" + (f" {int(v['fps'])}fps" if v["fps"] > 30 else "")
+            fsize = int(v["bandwidth"] / 8 * vod_duration) if v["bandwidth"] and vod_duration else None
             formats.append(Format(
-                id=f"mp4_{fid}",
+                id=f"mp4_{v['name'] or v['height']}",
                 label=label,
                 ext="mp4",
-                direct_url=f["url"],
+                direct_url=v["url"],
                 is_hls=True,
                 filesize=fsize,
             ))
@@ -74,24 +64,92 @@ class TwitchExtractor(BaseExtractor):
         if not formats:
             raise ValueError("No downloadable qualities found for this VOD")
 
-        # Use the lowest quality HLS stream for audio — same audio track, ~26x less data to download
+        # Lowest-bandwidth rendition for audio — same track, far less data to pull.
         formats.append(Format(
             id="mp3", label="MP3 Audio", ext="mp3",
-            direct_url=formats[-1].direct_url, is_hls=True,
+            direct_url=variants[-1]["url"], is_hls=True,
             filesize=int(vod_duration * 24000) if vod_duration else None,
         ))
 
-        return MediaInfo(title=title, thumbnail=thumbnail, platform="twitch_vod", formats=formats, duration=duration)
+        return MediaInfo(title=title, thumbnail=thumbnail, platform="twitch_vod",
+                         formats=formats, duration=vod_duration or None)
+
+    async def _access_token(self, vod_id: str) -> dict:
+        query = (
+            "{ videoPlaybackAccessToken("
+            f'id: "{vod_id}", '
+            'params: { platform: "web", playerBackend: "mediaplayer", playerType: "site" }'
+            ") { value signature } }"
+        )
+        data = await self._gql({"query": query})
+        tok = (data.get("data") or {}).get("videoPlaybackAccessToken")
+        if not tok:
+            raise ValueError("Could not authorize this Twitch VOD (it may be private or deleted)")
+        return tok
+
+    async def _video_metadata(self, vod_id: str) -> dict:
+        payload = [{
+            "operationName": "VideoMetadata",
+            "variables": {"channelLogin": "", "videoID": vod_id},
+            "extensions": {"persistedQuery": {"version": 1, "sha256Hash": _VIDEO_METADATA_HASH}},
+        }]
+        data = await self._gql(payload)
+        video = (data[0].get("data") or {}).get("video")
+        if not video:
+            raise ValueError(f"Twitch VOD not found: {vod_id}")
+        return video
+
+    async def _fetch_usher(self, vod_id: str, token_value: str, signature: str) -> str:
+        params = {
+            "allow_source": "true",
+            "allow_audio_only": "true",
+            "allow_spectre": "true",
+            "p": random.randint(1000000, 10000000),
+            "platform": "web",
+            "player": "twitchweb",
+            "supported_codecs": "av1,h265,h264",
+            "playlist_include_framerate": "true",
+            "sig": signature,
+            "token": token_value,
+        }
+        url = f"{_USHER}/vod/{vod_id}.m3u8?{urllib.parse.urlencode(params)}"
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            r = await client.get(url)
+            r.raise_for_status()
+            return r.text
+
+    def _parse_master_m3u8(self, text: str) -> list[dict]:
+        """Parse a Twitch usher master playlist into quality variants."""
+        variants: list[dict] = []
+        lines = text.splitlines()
+        name: str | None = None
+        for i, line in enumerate(lines):
+            if line.startswith("#EXT-X-MEDIA:"):
+                m = re.search(r'NAME="([^"]+)"', line)
+                name = m.group(1) if m else None
+            elif line.startswith("#EXT-X-STREAM-INF:"):
+                res = re.search(r"RESOLUTION=\d+x(\d+)", line)
+                bw = re.search(r"BANDWIDTH=(\d+)", line)
+                fr = re.search(r"FRAME-RATE=([\d.]+)", line)
+                url_line = lines[i + 1].strip() if i + 1 < len(lines) else ""
+                if url_line and not url_line.startswith("#"):
+                    variants.append({
+                        "name": name,
+                        "height": int(res.group(1)) if res else 0,
+                        "fps": float(fr.group(1)) if fr else 30.0,
+                        "bandwidth": int(bw.group(1)) if bw else 0,
+                        "url": url_line,
+                    })
+                name = None
+        variants.sort(key=lambda v: v["height"], reverse=True)
+        return variants
 
     # ── Clip ─────────────────────────────────────────────────────────────────
 
     async def _clip_info(self, url: str) -> MediaInfo:
         slug = self._parse_clip_slug(url)
         query = [{"operationName": "ShareClipRenderStatus", "variables": {"slug": slug},
-                  "extensions": {"persistedQuery": {
-                      "version": 1,
-                      "sha256Hash": "0a02bb974443b576f5579aab0fef1d4b7f44e58a8a256f0c5adfead0db70640f",
-                  }}}]
+                  "extensions": {"persistedQuery": {"version": 1, "sha256Hash": _SHARE_CLIP_HASH}}}]
         data = await self._gql(query)
         clip = data[0]["data"]["clip"]
         if not clip:
@@ -104,7 +162,6 @@ class TwitchExtractor(BaseExtractor):
         sig = token["signature"]
         tok = token["value"]
 
-        # Qualities live in assets[0].videoQualities (yt-dlp's ShareClipRenderStatus structure)
         assets = clip.get("assets") or []
         qualities = (assets[0].get("videoQualities") or []) if assets else []
 
@@ -140,6 +197,12 @@ class TwitchExtractor(BaseExtractor):
             )
             r.raise_for_status()
             return r.json()
+
+    def _parse_vod_id(self, url: str) -> str:
+        match = re.search(r"/videos/(\d+)", url)
+        if not match:
+            raise ValueError("Could not parse Twitch VOD id")
+        return match.group(1)
 
     def _parse_clip_slug(self, url: str) -> str:
         match = re.search(r"/clip/([^/?]+)", url) or re.search(r"clips\.twitch\.tv/([^/?]+)", url)
