@@ -1,3 +1,4 @@
+import asyncio
 import re
 
 import httpx
@@ -7,7 +8,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from services import router as media_router
-from services.downloader import READ_SIZE, CHUNK_SIZE, _CDN_HEADERS, stream_merged, stream_direct, stream_audio_extract, stream_ffmpeg_url
+from services.downloader import READ_SIZE, CHUNK_SIZE, _CDN_HEADERS, stream_merged, stream_direct, stream_audio_extract, stream_ffmpeg_url, stream_hls_concurrent
 from extractors.base import Format
 
 app = FastAPI(title="Ripple API", version="1.0.0")
@@ -97,8 +98,14 @@ async def cdn_proxy(url: str = Query(...)):
             pos = 0
             while pos < clen:
                 end = min(pos + CHUNK_SIZE - 1, clen - 1)
-                r = await client.get(url, headers={**base, "Range": f"bytes={pos}-{end}"})
-                r.raise_for_status()
+                # YouTube CDN throttling sometimes returns a transient 403; retry the chunk.
+                for attempt in range(4):
+                    r = await client.get(url, headers={**base, "Range": f"bytes={pos}-{end}"})
+                    if r.status_code in (403, 503) and attempt < 3:
+                        await asyncio.sleep(0.5 * (attempt + 1))
+                        continue
+                    r.raise_for_status()
+                    break
                 data = r.content
                 for i in range(0, len(data), READ_SIZE):
                     yield data[i:i + READ_SIZE]
@@ -164,29 +171,19 @@ async def download(
         response_headers["Content-Length"] = str(filesize)
 
     if fmt.needs_merge:
-        return StreamingResponse(
-            content=stream_merged(fmt),  # ffmpeg fetches CDN URLs + muxes inline
-            media_type=media_type,
-            headers=response_headers,
-        )
+        content = stream_merged(fmt)  # ffmpeg fetches CDN URLs + muxes inline
     elif fmt.needs_audio_extract:
-        return StreamingResponse(
-            content=stream_audio_extract(fmt),
-            media_type=media_type,
-            headers=response_headers,
-        )
+        content = stream_audio_extract(fmt)
     elif fmt.is_hls:
-        # ffmpeg pulls the HLS playlist directly and either remuxes to MP4 or extracts MP3.
+        # Download HLS fragments in parallel, then ffmpeg muxes to MP4 / extracts MP3.
         direct_url = fmt.direct_url or fmt.audio_url or fmt.video_url
-        return StreamingResponse(
-            content=stream_ffmpeg_url(direct_url, audio_only=fmt.ext == "mp3", extra_headers=cdn_headers),
-            media_type=media_type,
-            headers=response_headers,
-        )
+        content = stream_hls_concurrent(direct_url, audio_only=fmt.ext == "mp3", extra_headers=cdn_headers)
     else:
         direct_url = fmt.direct_url or fmt.audio_url or fmt.video_url
-        return StreamingResponse(
-            content=stream_direct(direct_url, cdn_headers),
-            media_type=media_type,
-            headers=response_headers,
-        )
+        content = stream_direct(direct_url, cdn_headers)
+
+    return StreamingResponse(
+        content=content,
+        media_type=media_type,
+        headers=response_headers,
+    )

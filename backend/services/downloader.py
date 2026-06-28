@@ -1,5 +1,7 @@
 import asyncio
+import re
 from collections.abc import AsyncGenerator
+from urllib.parse import urljoin
 
 import httpx
 
@@ -7,8 +9,29 @@ from extractors.base import Format
 
 READ_SIZE = 65536           # 64 KB streaming read size
 CHUNK_SIZE = 10 * 1024 * 1024  # 10 MB Range chunks for YouTube CDN
+HLS_CONCURRENCY = 8         # parallel HLS fragment downloads
 
 _CDN_HEADERS = {"Accept-Encoding": "identity"}
+
+
+async def _pump(proc) -> AsyncGenerator[bytes, None]:
+    """Yield an ffmpeg subprocess's stdout, killing it if the client disconnects.
+
+    The kill is synchronous so it still runs when the generator is closed under
+    cancellation (an await in the finally could re-raise CancelledError first).
+    """
+    try:
+        while True:
+            chunk = await proc.stdout.read(READ_SIZE)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
 
 
 async def stream_direct(url: str, extra_headers: dict | None = None) -> AsyncGenerator[bytes, None]:
@@ -71,12 +94,8 @@ async def stream_audio_extract(fmt: Format) -> AsyncGenerator[bytes, None]:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
     )
-    while True:
-        chunk = await proc.stdout.read(READ_SIZE)
-        if not chunk:
-            break
+    async for chunk in _pump(proc):
         yield chunk
-    await proc.wait()
 
 
 async def stream_ffmpeg_url(url: str, audio_only: bool = False,
@@ -100,12 +119,8 @@ async def stream_ffmpeg_url(url: str, audio_only: bool = False,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
     )
-    while True:
-        chunk = await proc.stdout.read(READ_SIZE)
-        if not chunk:
-            break
+    async for chunk in _pump(proc):
         yield chunk
-    await proc.wait()
 
 
 async def stream_merged(fmt: Format) -> AsyncGenerator[bytes, None]:
@@ -130,9 +145,104 @@ async def stream_merged(fmt: Format) -> AsyncGenerator[bytes, None]:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
     )
-    while True:
-        chunk = await proc.stdout.read(READ_SIZE)
-        if not chunk:
-            break
+    async for chunk in _pump(proc):
         yield chunk
-    await proc.wait()
+
+
+def _parse_hls_segments(playlist: str, playlist_url: str) -> tuple[str | None, list[str]]:
+    """Return (init_segment_url, [fragment_urls]) from a media playlist."""
+    init: str | None = None
+    frags: list[str] = []
+    for line in playlist.splitlines():
+        line = line.strip()
+        if line.startswith("#EXT-X-MAP:"):
+            m = re.search(r'URI="([^"]+)"', line)
+            if m:
+                init = urljoin(playlist_url, m.group(1))
+        elif line and not line.startswith("#"):
+            frags.append(urljoin(playlist_url, line))
+    return init, frags
+
+
+async def stream_hls_concurrent(playlist_url: str, audio_only: bool = False,
+                                extra_headers: dict | None = None) -> AsyncGenerator[bytes, None]:
+    """Download HLS fragments in parallel and pipe them to ffmpeg in order.
+
+    Replaces ffmpeg's built-in (serial) HLS fetch — the serial RTT per fragment
+    is what made long VOD audio/video downloads crawl. ffmpeg only muxes/encodes.
+    """
+    base_headers = {**(extra_headers or {}), **_CDN_HEADERS}
+
+    async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
+        r = await client.get(playlist_url, headers=base_headers)
+        r.raise_for_status()
+        init, frags = _parse_hls_segments(r.text, str(r.url))
+
+    urls = ([init] if init else []) + frags
+    if not urls:
+        # Not a media playlist (or empty) — let ffmpeg handle the URL directly.
+        async for chunk in stream_ffmpeg_url(playlist_url, audio_only, extra_headers):
+            yield chunk
+        return
+
+    if audio_only:
+        ff_args = ["-vn", "-acodec", "libmp3lame", "-q:a", "2", "-f", "mp3"]
+    else:
+        ff_args = ["-c", "copy", "-bsf:a", "aac_adtstoasc",
+                   "-movflags", "frag_keyframe+empty_moov", "-f", "mp4"]
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-y", "-i", "pipe:0", *ff_args, "pipe:1",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+
+    async def _feed():
+        """Fetch fragments with a bounded look-ahead window, write to ffmpeg in order."""
+        async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
+            async def fetch(u: str) -> bytes:
+                for attempt in range(3):
+                    try:
+                        resp = await client.get(u, headers=base_headers)
+                        resp.raise_for_status()
+                        return resp.content
+                    except httpx.HTTPError:
+                        if attempt == 2:
+                            raise
+                        await asyncio.sleep(0.4)
+                return b""
+
+            window = HLS_CONCURRENCY * 2
+            total = len(urls)
+            tasks: dict[int, asyncio.Task] = {
+                i: asyncio.create_task(fetch(urls[i])) for i in range(min(window, total))
+            }
+            try:
+                for i in range(total):
+                    data = await tasks.pop(i)
+                    nxt = i + window
+                    if nxt < total:
+                        tasks[nxt] = asyncio.create_task(fetch(urls[nxt]))
+                    proc.stdin.write(data)
+                    await proc.stdin.drain()
+            finally:
+                for t in tasks.values():
+                    t.cancel()
+                proc.stdin.close()
+
+    feeder = asyncio.create_task(_feed())
+    try:
+        while True:
+            chunk = await proc.stdout.read(READ_SIZE)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        # On client disconnect this runs under cancellation, so do the synchronous
+        # kill FIRST — any await here may immediately re-raise CancelledError.
+        feeder.cancel()
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
