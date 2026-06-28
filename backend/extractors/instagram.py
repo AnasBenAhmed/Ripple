@@ -5,12 +5,7 @@ import httpx
 
 from .base import BaseExtractor, Format, MediaInfo
 
-# Public web app ID — same value Instagram's own website sends as X-IG-App-ID.
-_APP_ID = "936619743392459"
-
-# GraphQL persisted-query that returns full post media without login.
-# This is the same query Instagram's web client uses to render a post page.
-_DOC_ID = "10015901848480474"
+from config import INSTAGRAM_APP_ID as _APP_ID, INSTAGRAM_DOC_ID as _DOC_ID
 
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -102,13 +97,19 @@ class InstagramExtractor(BaseExtractor):
         dur = media.get("video_duration") or 0
         thumb = media.get("display_url") or media.get("thumbnail_src") or ""
         n = suffix or ""
+        sfx = (" " + n.lstrip("_")) if n else ""
         return [
             Format(
-                id=f"mp4{n}", label=f"MP4 Video{(' ' + n.lstrip('_')) if n else ''}",
+                id=f"mp4{n}", label=f"MP4 Video{sfx}",
                 ext="mp4", direct_url=video_url, http_headers=_IG_HEADERS, thumbnail=thumb,
             ),
             Format(
-                id=f"mp3{n}", label=f"MP3 Audio{(' ' + n.lstrip('_')) if n else ''}",
+                id=f"m4a{n}", label=f"M4A Audio{sfx}",
+                ext="m4a", direct_url=video_url, http_headers=_IG_HEADERS,
+                needs_audio_extract=True, thumbnail=thumb,
+            ),
+            Format(
+                id=f"mp3{n}", label=f"MP3 Audio{sfx}",
                 ext="mp3", direct_url=video_url, http_headers=_IG_HEADERS,
                 needs_audio_extract=True, thumbnail=thumb,
                 filesize=int(dur * 24000) if dur else None,

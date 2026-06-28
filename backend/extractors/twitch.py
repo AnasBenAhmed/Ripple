@@ -5,16 +5,14 @@ import urllib.parse
 import httpx
 
 from .base import BaseExtractor, Format, MediaInfo
-
-# Public web-player client ID used by Twitch's own site.
-_CLIENT_ID = "ue6666qo983tsx6so1t0vnawi233wa"
+from config import (
+    TWITCH_CLIENT_ID as _CLIENT_ID,
+    TWITCH_VIDEO_METADATA_HASH as _VIDEO_METADATA_HASH,
+    TWITCH_SHARE_CLIP_HASH as _SHARE_CLIP_HASH,
+)
 
 _GQL = "https://gql.twitch.tv/gql"
 _USHER = "https://usher.ttvnw.net"
-
-# Persisted GraphQL query hashes Twitch's web client uses.
-_VIDEO_METADATA_HASH = "45111672eea2e507f8ba44d101a61862f9c56b11dee09a15634cb75cb9b9084d"
-_SHARE_CLIP_HASH = "0a02bb974443b576f5579aab0fef1d4b7f44e58a8a256f0c5adfead0db70640f"
 
 
 class TwitchExtractor(BaseExtractor):
@@ -64,10 +62,15 @@ class TwitchExtractor(BaseExtractor):
         if not formats:
             raise ValueError("No downloadable qualities found for this VOD")
 
-        # Lowest-bandwidth rendition for audio — same track, far less data to pull.
+        # Audio-only rendition (last after sort) — same track, far less data to pull.
+        audio_url = variants[-1]["url"]
+        formats.append(Format(
+            id="m4a", label="M4A Audio", ext="m4a",
+            direct_url=audio_url, is_hls=True,
+        ))
         formats.append(Format(
             id="mp3", label="MP3 Audio", ext="mp3",
-            direct_url=variants[-1]["url"], is_hls=True,
+            direct_url=audio_url, is_hls=True,
             filesize=int(vod_duration * 24000) if vod_duration else None,
         ))
 
@@ -182,8 +185,11 @@ class TwitchExtractor(BaseExtractor):
             raise ValueError("No downloadable qualities found for this clip")
 
         # Use lowest quality MP4 for audio — same audio track, much less data to download
+        audio_src = formats[-1].direct_url
+        formats.append(Format(id="m4a", label="M4A Audio", ext="m4a",
+                              direct_url=audio_src, needs_audio_extract=True))
         formats.append(Format(id="mp3", label="MP3 Audio", ext="mp3",
-                               direct_url=formats[-1].direct_url, needs_audio_extract=True,
+                               direct_url=audio_src, needs_audio_extract=True,
                                filesize=int(clip_duration * 24000) if clip_duration else None))
 
         return MediaInfo(title=title, thumbnail=thumbnail, platform="twitch_clip", formats=formats)

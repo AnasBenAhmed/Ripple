@@ -4,6 +4,10 @@ import re
 import httpx
 
 from .base import BaseExtractor, Format, MediaInfo
+from config import (
+    YOUTUBE_CLIENT_NAME, YOUTUBE_CLIENT_NAME_ID,
+    YOUTUBE_CLIENT_VERSION, YOUTUBE_USER_AGENT,
+)
 
 _VISITOR_DATA_CACHE: str = ""
 
@@ -82,15 +86,12 @@ class YouTubeExtractor(BaseExtractor):
             "videoId": video_id,
             "context": {
                 "client": {
-                    "clientName": "ANDROID_VR",
-                    "clientVersion": "1.65.10",
+                    "clientName": YOUTUBE_CLIENT_NAME,
+                    "clientVersion": YOUTUBE_CLIENT_VERSION,
                     "deviceMake": "Oculus",
                     "deviceModel": "Quest 3",
                     "androidSdkVersion": 32,
-                    "userAgent": (
-                        "com.google.android.apps.youtube.vr.oculus/1.65.10 "
-                        "(Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
-                    ),
+                    "userAgent": YOUTUBE_USER_AGENT,
                     "osName": "Android",
                     "osVersion": "12L",
                     "hl": "en",
@@ -101,12 +102,9 @@ class YouTubeExtractor(BaseExtractor):
         }
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": (
-                "com.google.android.apps.youtube.vr.oculus/1.65.10 "
-                "(Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
-            ),
-            "X-YouTube-Client-Name": "28",
-            "X-YouTube-Client-Version": "1.65.10",
+            "User-Agent": YOUTUBE_USER_AGENT,
+            "X-YouTube-Client-Name": YOUTUBE_CLIENT_NAME_ID,
+            "X-YouTube-Client-Version": YOUTUBE_CLIENT_VERSION,
             "X-Goog-Visitor-Id": visitor_data,
             "Accept-Language": "en-US,en;q=0.9",
         }
@@ -158,12 +156,21 @@ class YouTubeExtractor(BaseExtractor):
                 ))
 
         if best_audio:
+            # M4A = the AAC stream copied straight through (fast). MP3 = real
+            # transcode (still fast — the audio is pulled via the CDN proxy).
+            formats.append(Format(
+                id="m4a",
+                label="M4A Audio",
+                ext="m4a",
+                audio_url=best_audio["url"],
+                filesize=audio_clen,
+            ))
             formats.append(Format(
                 id="mp3",
                 label="MP3 Audio",
                 ext="mp3",
                 audio_url=best_audio["url"],
-                needs_merge=False,
+                needs_audio_extract=True,
                 filesize=audio_clen,
             ))
 

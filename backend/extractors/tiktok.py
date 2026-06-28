@@ -55,6 +55,10 @@ class TikTokExtractor(BaseExtractor):
                 direct_url=video_url, http_headers=cdn_headers, filesize=filesize,
             ))
             formats.append(Format(
+                id="m4a", label="M4A Audio", ext="m4a",
+                direct_url=video_url, http_headers=cdn_headers, needs_audio_extract=True,
+            ))
+            formats.append(Format(
                 id="mp3", label="MP3 Audio", ext="mp3",
                 direct_url=video_url, http_headers=cdn_headers, needs_audio_extract=True,
                 filesize=int(duration * 24000) if duration else None,
