@@ -172,10 +172,7 @@ function QueueCard({ item, isRunning, onRemove, onFormatChange, onRetry }: CardP
           width: 72, height: 46, flexShrink: 0, borderRadius: 8,
           overflow: "hidden", background: "#191919", position: "relative",
         }}>
-          {(() => {
-            const selThumb = item.media?.formats.find(f => f.id === item.selectedFormat)?.thumbnail;
-            const previewSrc = selThumb || item.media?.thumbnail;
-            return previewSrc ? (
+          {previewSrc ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={buildThumbnailUrl(previewSrc, item.media!.platform)}
@@ -187,8 +184,7 @@ function QueueCard({ item, isRunning, onRemove, onFormatChange, onRetry }: CardP
               className={isFetch ? "rpl-pulse" : ""}
               style={{ width: "100%", height: "100%", background: "#1e1e1e" }}
             />
-          );
-          })()}
+          )}
           {isDone && (
             <div style={{
               position: "absolute", inset: 0, background: "rgba(34,197,94,0.52)",
