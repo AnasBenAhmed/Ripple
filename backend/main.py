@@ -8,7 +8,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from services import router as media_router
-from services.downloader import READ_SIZE, CHUNK_SIZE, _CDN_HEADERS, stream_merged, stream_direct, stream_audio_extract, stream_ffmpeg_url, stream_hls_concurrent
+from services.downloader import READ_SIZE, CHUNK_SIZE, _CDN_HEADERS, stream_merged, stream_direct, stream_audio_extract, stream_ffmpeg_url, stream_hls_concurrent, stream_hls_mp3_parallel
 from extractors.base import Format
 
 app = FastAPI(title="Ripple API", version="1.0.0")
