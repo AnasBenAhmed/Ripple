@@ -48,7 +48,7 @@
 
 <p align="center">
 🎬 &nbsp;<b>Multi-platform</b> — YouTube videos &amp; Shorts, Instagram Reels / Posts / Carousels, TikTok, Twitch Clips &amp; VODs<br/><br/>
-🎚️ &nbsp;<b>Quality picker</b> — MP4 at 1080p / 720p / 480p / 360p, or extract <b>MP3 audio</b><br/><br/>
+🎚️ &nbsp;<b>Quality picker</b> — MP4 at 1080p / 720p / 480p / 360p, or grab audio as <b>M4A</b> (fast copy) or <b>MP3</b><br/><br/>
 ⚡ &nbsp;<b>Fast downloads</b> — bypasses YouTube's per-connection CDN throttling with chunked range requests<br/><br/>
 📊 &nbsp;<b>Live progress</b> — real-time speed and percentage for every item in the queue<br/><br/>
 🔓 &nbsp;<b>No login</b> — pulls public content straight from each platform's web API<br/><br/>
@@ -68,13 +68,13 @@
       <h3>▶️ YouTube</h3>
       <p><b>Videos &amp; Shorts</b><br/>
       🎬 MP4 — 1080p / 720p / 480p / 360p<br/>
-      🎵 MP3 — audio extraction</p>
+      🎵 M4A (fast) &amp; MP3 — audio</p>
     </td>
     <td width="50%" valign="top">
       <h3>📸 Instagram</h3>
       <p><b>Reels, Posts &amp; Carousels</b><br/>
       🎬 MP4 — video<br/>
-      🎵 MP3 — audio<br/>
+      🎵 M4A (fast) &amp; MP3 — audio<br/>
       🖼️ JPG — photos &amp; carousel slides</p>
     </td>
   </tr>
@@ -83,13 +83,13 @@
       <h3>🎵 TikTok</h3>
       <p><b>Videos &amp; Slideshows</b><br/>
       🎬 MP4 — watermark-free, source quality<br/>
-      🎵 MP3 — audio</p>
+      🎵 M4A (fast) &amp; MP3 — audio</p>
     </td>
     <td width="50%" valign="top">
       <h3>🟣 Twitch</h3>
       <p><b>Clips &amp; VODs</b><br/>
       🎬 MP4 — up to 1080p60, full quality ladder<br/>
-      🎵 MP3 — audio</p>
+      🎵 M4A (fast) &amp; MP3 — audio</p>
     </td>
   </tr>
 </table>
@@ -167,6 +167,61 @@ npm run dev
   The FastAPI backend streams the result straight to your browser while reporting live progress;<br/>
   <code>ffmpeg</code> handles muxing and MP3 extraction on the fly — nothing is written to disk on the server.
 </p>
+
+<!-- divider -->
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:E11B22,100:E0A82E&height=4" width="100%"/>
+
+<!-- ============ UPDATING IDS ============ -->
+<h2 align="center">🔧 Updating Platform IDs</h2>
+
+<p align="center">
+  Every platform-specific "magic value" lives in one file: <a href="backend/config.py"><code>backend/config.py</code></a>.
+</p>
+
+> [!IMPORTANT]
+> These IDs **may** change — not for sure, but a platform **can** rotate one at any time. If **one** platform suddenly stops working while the others are fine, an outdated ID in `config.py` is the most likely cause. Here's how to find the new value. You only edit the text **between the quotes** — keep the quotes, then restart the backend.
+
+<details>
+<summary><b>📸 Instagram</b> — <code>INSTAGRAM_DOC_ID</code> / <code>INSTAGRAM_APP_ID</code></summary>
+
+<br/>
+
+1. Open any **public reel** on instagram.com in Chrome (logged out is fine).
+2. Press **F12** → **Network** tab → tick **Fetch/XHR** → refresh the page.
+3. In the filter box type **`graphql`** and click the **`graphql/query`** request.
+4. Under **Payload**, find **`doc_id`** → copy that number into `INSTAGRAM_DOC_ID`.
+5. Under **Headers**, find **`X-IG-App-ID`** → copy that number into `INSTAGRAM_APP_ID`.
+
+</details>
+
+<details>
+<summary><b>🟣 Twitch</b> — <code>TWITCH_CLIENT_ID</code> / GraphQL hashes</summary>
+
+<br/>
+
+1. Open any **Twitch VOD or clip** in Chrome → **F12** → **Network** → filter **`gql`**.
+2. Click a **`gql`** request → **Headers** → copy **`Client-ID`** into `TWITCH_CLIENT_ID`.
+3. The two `*_HASH` values are query fingerprints and rarely change. If clips/VODs break, search "twitch gql `VideoMetadata` persistedQuery sha256Hash" for the current value and paste it between the quotes.
+
+</details>
+
+<details>
+<summary><b>▶️ YouTube</b> — <code>YOUTUBE_CLIENT_VERSION</code></summary>
+
+<br/>
+
+YouTube rarely breaks. If it does, the Android-VR client version may have moved on. Search for the latest **"YouTube ANDROID_VR clientVersion"**, then update `YOUTUBE_CLIENT_VERSION` **and** the version number inside `YOUTUBE_USER_AGENT` to match.
+
+</details>
+
+<details>
+<summary><b>🎵 TikTok</b> — nothing to update</summary>
+
+<br/>
+
+TikTok needs no IDs — Ripple reads the data embedded in the public video page, so there's nothing in `config.py` to change for it.
+
+</details>
 
 <!-- divider -->
 <img src="https://capsule-render.vercel.app/api?type=rect&color=0:E0A82E,100:E11B22&height=4" width="100%"/>
