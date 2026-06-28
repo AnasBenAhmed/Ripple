@@ -145,6 +145,10 @@ function QueueCard({ item, isRunning, onRemove, onFormatChange, onRetry }: CardP
   const isRdy   = item.status === "ready";
   const isFetch = item.status === "fetching";
 
+  // Carousel posts give each slide its own thumbnail — follow the selected one.
+  const selectedThumb = item.media?.formats.find(f => f.id === item.selectedFormat)?.thumbnail;
+  const previewSrc = selectedThumb || item.media?.thumbnail;
+
   const cardBorder = isDl   ? "1px solid rgba(225,27,34,0.22)"
                    : isDone ? "1px solid rgba(34,197,94,0.14)"
                    : isErr  ? "1px solid rgba(239,68,68,0.22)"
