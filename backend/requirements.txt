@@ -1,5 +1,6 @@
+# Python dependencies. Install with:  pip install -r requirements.txt
+# NOTE: the `ffmpeg` *binary* must also be installed and on your PATH
+#       (https://ffmpeg.org/download.html) — it is not a pip package.
 fastapi>=0.115.6
 uvicorn>=0.32.0
 httpx>=0.28.0
-beautifulsoup4>=4.12.0
-ffmpeg-python>=0.2.0
