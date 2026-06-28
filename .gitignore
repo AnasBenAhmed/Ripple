@@ -1,7 +1,0 @@
-yt-dlp/
-frontend/.next/
-frontend/node_modules/
-backend/__pycache__/
-backend/cookies/
-*.pyc
-*.log
