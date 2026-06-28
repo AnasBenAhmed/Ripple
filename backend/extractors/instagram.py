@@ -1,16 +1,27 @@
-import asyncio
 import json
-import os
 import re
+
+import httpx
 
 from .base import BaseExtractor, Format, MediaInfo
 
+# Public web app ID — same value Instagram's own website sends as X-IG-App-ID.
+_APP_ID = "936619743392459"
+
+# GraphQL persisted-query that returns full post media without login.
+# This is the same query Instagram's web client uses to render a post page.
+_DOC_ID = "10015901848480474"
+
+_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+# fbcdn serves these without auth; Referer keeps it happy on some edges.
 _IG_HEADERS = {"Referer": "https://www.instagram.com/"}
 
-# Drop a Netscape cookies.txt file here (exported from Chrome via "Get cookies.txt LOCALLY")
-_COOKIES_FILE = os.path.normpath(
-    os.path.join(os.path.dirname(__file__), "..", "cookies", "instagram.txt")
-)
+# csrftoken seeded once from the homepage and reused for the session.
+_CSRF_TOKEN: str = ""
 
 
 class InstagramExtractor(BaseExtractor):
@@ -18,119 +29,131 @@ class InstagramExtractor(BaseExtractor):
         return "instagram.com" in url
 
     async def extract_info(self, url: str) -> MediaInfo:
+        shortcode = self._parse_shortcode(url)
+        media = await self._fetch_media(shortcode)
+        return self._build_media_info(url, media)
+
+    def _parse_shortcode(self, url: str) -> str:
         m = re.search(r"/(?:p|tv|reels?)/([A-Za-z0-9_-]+)", url)
         if not m:
             raise ValueError("Could not extract Instagram post ID from URL")
-        return await self._from_ytdlp(url)
+        return m.group(1)
 
-    async def _from_ytdlp(self, url: str) -> MediaInfo:
-        cmd = ["yt-dlp", "--dump-json", "--no-download", "--quiet", "--no-warnings"]
+    async def _get_csrf(self, client: httpx.AsyncClient) -> str:
+        """Hit the homepage once to obtain a csrftoken cookie. Cached per process."""
+        global _CSRF_TOKEN
+        if _CSRF_TOKEN:
+            return _CSRF_TOKEN
+        await client.get("https://www.instagram.com/", headers={"User-Agent": _UA})
+        _CSRF_TOKEN = client.cookies.get("csrftoken", "")
+        return _CSRF_TOKEN
 
-        if os.path.exists(_COOKIES_FILE):
-            cmd += ["--cookies", _COOKIES_FILE]
+    async def _fetch_media(self, shortcode: str) -> dict:
+        global _CSRF_TOKEN
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            csrf = await self._get_csrf(client)
+            headers = {
+                "User-Agent": _UA,
+                "X-IG-App-ID": _APP_ID,
+                "X-CSRFToken": csrf,
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": f"https://www.instagram.com/p/{shortcode}/",
+                "Content-Type": "application/x-www-form-urlencoded",
+            }
+            data = {"doc_id": _DOC_ID, "variables": json.dumps({"shortcode": shortcode})}
+            r = await client.post("https://www.instagram.com/graphql/query/",
+                                  data=data, headers=headers)
 
-        cmd.append(url)
+            # A stale csrftoken can make IG reject the call — reseed once and retry.
+            if r.status_code in (401, 403) or '"data":null' in r.text:
+                _CSRF_TOKEN = ""
+                csrf = await self._get_csrf(client)
+                headers["X-CSRFToken"] = csrf
+                r = await client.post("https://www.instagram.com/graphql/query/",
+                                      data=data, headers=headers)
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+        try:
+            payload = r.json()
+        except json.JSONDecodeError:
+            raise ValueError("Instagram returned an unexpected response")
 
-        if proc.returncode != 0:
-            err = stderr.decode(errors="replace").strip()
-            needs_login = any(k in err.lower() for k in ("login", "authentication", "cookies", "empty media", "private"))
-            if needs_login:
-                raise ValueError(
-                    "Instagram requires login for this content. "
-                    "Fix: install the 'Get cookies.txt LOCALLY' Chrome extension, "
-                    "export instagram.com cookies, and save the file to: "
-                    "ripple/backend/cookies/instagram.txt"
-                )
+        media = (payload.get("data") or {}).get("xdt_shortcode_media")
+        if not media:
             raise ValueError(
-                f"Could not extract this Instagram post. "
-                f"{err[:160].strip() if err else 'Unknown error'}"
+                "This Instagram post is private or unavailable. "
+                "Public posts and reels download without login."
             )
+        return media
 
-        raw = stdout.decode(errors="replace").strip()
-        if not raw:
-            raise ValueError(
-                "Instagram returned no media data. "
-                "The post may require login — add your cookies to "
-                "ripple/backend/cookies/instagram.txt"
-            )
+    def _caption_title(self, media: dict) -> str:
+        edges = media.get("edge_media_to_caption", {}).get("edges", [])
+        if edges:
+            text = edges[0].get("node", {}).get("text", "").strip()
+            if text:
+                return text[:80]
+        owner = (media.get("owner") or {}).get("username")
+        return f"@{owner}" if owner else "Instagram Post"
 
-        # yt-dlp outputs one JSON object per line for playlists
-        json_lines = [l.strip() for l in raw.splitlines() if l.strip().startswith("{")]
-        if not json_lines:
-            raise ValueError("No media data found for this Instagram post")
+    def _video_formats(self, media: dict, suffix: str = "") -> list[Format]:
+        """Build MP4 + MP3 formats for a single video node."""
+        video_url = media.get("video_url")
+        if not video_url:
+            return []
+        dur = media.get("video_duration") or 0
+        thumb = media.get("display_url") or media.get("thumbnail_src") or ""
+        n = suffix or ""
+        return [
+            Format(
+                id=f"mp4{n}", label=f"MP4 Video{(' ' + n.lstrip('_')) if n else ''}",
+                ext="mp4", direct_url=video_url, http_headers=_IG_HEADERS, thumbnail=thumb,
+            ),
+            Format(
+                id=f"mp3{n}", label=f"MP3 Audio{(' ' + n.lstrip('_')) if n else ''}",
+                ext="mp3", direct_url=video_url, http_headers=_IG_HEADERS,
+                needs_audio_extract=True, thumbnail=thumb,
+                filesize=int(dur * 24000) if dur else None,
+            ),
+        ]
 
-        data = json.loads(json_lines[0])
+    def _image_format(self, media: dict, suffix: str = "") -> list[Format]:
+        img = media.get("display_url") or media.get("thumbnail_src")
+        if not img:
+            return []
+        n = suffix or ""
+        return [Format(
+            id=f"image{n or '_1'}", label=f"Image{(' ' + n.lstrip('_')) if n else ' 1'}",
+            ext="jpg", direct_url=img, http_headers=_IG_HEADERS, thumbnail=img,
+        )]
 
-        title = (data.get("title") or data.get("description") or "Instagram Post")[:80]
-        thumbnail = data.get("thumbnail") or ""
-        duration: float = data.get("duration") or 0
-        entries = data.get("entries") or []
+    def _build_media_info(self, url: str, media: dict) -> MediaInfo:
+        title = self._caption_title(media)
+        thumbnail = media.get("display_url") or media.get("thumbnail_src") or ""
+        duration = int(media.get("video_duration") or 0)
         is_reel = bool(re.search(r"/reels?/", url, re.IGNORECASE))
 
         formats: list[Format] = []
+        children = media.get("edge_sidecar_to_children", {}).get("edges", [])
 
-        if entries:
-            # Carousel post
-            for i, entry in enumerate(entries, 1):
-                vid_url = entry.get("url") or ""
-                ext = entry.get("ext", "mp4")
-                thumb = entry.get("thumbnail") or ""
-                ent_dur: float = entry.get("duration") or 0
-                fs = entry.get("filesize") or entry.get("filesize_approx") or None
-                if vid_url and ext in ("mp4", "m4v", "mov", "webm"):
-                    formats.append(Format(
-                        id=f"video_{i}", label=f"Video {i}", ext="mp4",
-                        direct_url=vid_url, http_headers=_IG_HEADERS,
-                        thumbnail=thumb, filesize=fs,
-                    ))
-                    formats.append(Format(
-                        id=f"audio_{i}", label=f"Audio {i}", ext="mp3",
-                        direct_url=vid_url, http_headers=_IG_HEADERS,
-                        needs_audio_extract=True,
-                        filesize=int(ent_dur * 24000) if ent_dur else None,
-                        thumbnail=thumb,
-                    ))
-                elif vid_url:
-                    formats.append(Format(
-                        id=f"image_{i}", label=f"Image {i}", ext="jpg",
-                        direct_url=vid_url, http_headers=_IG_HEADERS, thumbnail=thumb,
-                    ))
+        if children:
+            # Carousel post — one set of formats per child.
+            for i, edge in enumerate(children, 1):
+                node = edge.get("node", {})
+                if node.get("is_video"):
+                    formats += self._video_formats(node, suffix=f"_{i}")
+                else:
+                    formats += self._image_format(node, suffix=f"_{i}")
             platform = "instagram_post"
-        else:
-            # Single video or image
-            vid_url = data.get("url") or ""
-            ext = data.get("ext", "mp4")
-            filesize = data.get("filesize") or data.get("filesize_approx") or None
-            if vid_url and ext in ("mp4", "m4v", "mov", "webm"):
-                formats.append(Format(
-                    id="mp4", label="MP4 Video", ext="mp4",
-                    direct_url=vid_url, http_headers=_IG_HEADERS, filesize=filesize,
-                ))
-                formats.append(Format(
-                    id="mp3", label="MP3 Audio", ext="mp3",
-                    direct_url=vid_url, http_headers=_IG_HEADERS,
-                    needs_audio_extract=True,
-                    filesize=int(duration * 24000) if duration else None,
-                ))
-            elif thumbnail:
-                formats.append(Format(
-                    id="image_1", label="Image 1", ext="jpg",
-                    direct_url=thumbnail, http_headers=_IG_HEADERS,
-                ))
+        elif media.get("is_video"):
+            formats += self._video_formats(media)
             platform = "instagram" if is_reel else "instagram_post"
+        else:
+            formats += self._image_format(media)
+            platform = "instagram_post"
 
         if not formats:
             raise ValueError("No downloadable content found in this Instagram post")
 
         return MediaInfo(
             title=title, thumbnail=thumbnail, platform=platform,
-            formats=formats,
-            duration=int(duration) if duration else None,
+            formats=formats, duration=duration or None,
         )

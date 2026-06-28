@@ -109,95 +109,20 @@ const GLOBAL_CSS = `
   .rpl-link:hover { color: #888; border-bottom-color: #666; }
 `;
 
-/* ── Instagram connect inline card ──────────────────────────────────── */
-
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8006";
+/* ── Error display ───────────────────────────────────────────────────── */
 
 function ErrorCard({ item, onRetry }: { item: QueueItem; onRetry: () => void }) {
-  const isIgLogin = (item.error ?? "").toLowerCase().includes("instagram requires login");
-  const [connecting, setConnecting] = useState(false);
-  const [sessionId, setSessionId] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [saveErr, setSaveErr] = useState("");
-
-  async function saveSession() {
-    const sid = sessionId.trim();
-    if (!sid) return;
-    setSaving(true);
-    setSaveErr("");
-    try {
-      const res = await fetch(`${BASE}/api/instagram/connect`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sid }),
-      });
-      if (!res.ok) throw new Error("Failed to save");
-      setConnecting(false);
-      setSessionId("");
-      onRetry();
-    } catch {
-      setSaveErr("Could not save. Try again.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
   return (
     <div>
       <p style={{ fontSize: 12, color: "#ef4444", margin: "0 0 5px", lineHeight: 1.4 }}>
-        {isIgLogin ? "Instagram requires login." : (item.error ?? "Failed")}
+        {item.error ?? "Failed"}
       </p>
       <p style={{ fontSize: 10, color: "#2a2a2a", margin: "0 0 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {safeHost(item.url)}
       </p>
-
-      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <button onClick={onRetry} style={{ fontSize: 11, color: "#555", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline", textUnderlineOffset: 2 }}>
-          ↺ retry
-        </button>
-        {isIgLogin && !connecting && (
-          <button onClick={() => setConnecting(true)} style={{ fontSize: 11, color: "#E11B22", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline", textUnderlineOffset: 2 }}>
-            Connect Instagram →
-          </button>
-        )}
-      </div>
-
-      {isIgLogin && connecting && (
-        <div style={{ marginTop: 10, padding: "10px 12px", background: "#0a0a0a", border: "1px solid #1e1e1e", borderRadius: 8 }}>
-          <p style={{ fontSize: 11, color: "#888", margin: "0 0 4px", lineHeight: 1.5 }}>
-            1. Open Chrome → press <strong style={{color:"#aaa"}}>F12</strong> → <strong style={{color:"#aaa"}}>Application</strong> → <strong style={{color:"#aaa"}}>Cookies</strong> → <strong style={{color:"#aaa"}}>instagram.com</strong>
-          </p>
-          <p style={{ fontSize: 11, color: "#888", margin: "0 0 8px" }}>
-            2. Copy the value of <strong style={{color:"#aaa"}}>sessionid</strong> and paste it below:
-          </p>
-          <input
-            autoFocus
-            value={sessionId}
-            onChange={e => setSessionId(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && saveSession()}
-            placeholder="Paste sessionid here…"
-            style={{
-              width: "100%", boxSizing: "border-box",
-              background: "#111", border: "1px solid #2a2a2a", borderRadius: 6,
-              color: "#ccc", fontSize: 11, padding: "6px 10px", outline: "none",
-              fontFamily: "monospace", marginBottom: 8,
-            }}
-          />
-          {saveErr && <p style={{ fontSize: 10, color: "#ef4444", margin: "0 0 6px" }}>{saveErr}</p>}
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              onClick={saveSession}
-              disabled={saving || !sessionId.trim()}
-              style={{ fontSize: 11, padding: "5px 14px", borderRadius: 6, border: "none", cursor: "pointer", background: saving ? "#2a0a0a" : "#E11B22", color: "#fff", fontWeight: 600 }}
-            >
-              {saving ? "Saving…" : "Save & Retry"}
-            </button>
-            <button onClick={() => setConnecting(false)} style={{ fontSize: 11, color: "#444", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-              cancel
-            </button>
-          </div>
-        </div>
-      )}
+      <button onClick={onRetry} style={{ fontSize: 11, color: "#555", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline", textUnderlineOffset: 2 }}>
+        ↺ retry
+      </button>
     </div>
   );
 }

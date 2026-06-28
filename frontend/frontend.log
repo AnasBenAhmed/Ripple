@@ -6,8 +6,12 @@
 - Local:         http://localhost:3000
 - Network:       http://192.168.0.125:3000
 - Environments: .env.local
-✓ Ready in 954ms
+✓ Ready in 505ms
 
- GET / 200 in 323ms (next.js: 175ms, application-code: 148ms)
- GET / 200 in 27ms (next.js: 1646µs, application-code: 25ms)
- GET / 200 in 19ms (next.js: 1905µs, application-code: 17ms)
+ GET / 200 in 386ms (next.js: 201ms, application-code: 185ms)
+ GET / 200 in 25ms (next.js: 2ms, application-code: 22ms)
+ GET / 200 in 22ms (next.js: 2ms, application-code: 20ms)
+✓ Compiled in 277ms
+ GET / 200 in 72ms (next.js: 39ms, application-code: 33ms)
+✓ Compiled in 56ms
+ GET / 200 in 56ms (next.js: 34ms, application-code: 21ms)
