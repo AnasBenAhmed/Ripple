@@ -148,6 +148,8 @@ async def download(
 
     if fmt.ext == "mp3":
         media_type = "audio/mpeg"
+    elif fmt.ext == "m4a":
+        media_type = "audio/mp4"
     elif fmt.ext == "jpg":
         media_type = "image/jpeg"
     else:
@@ -180,8 +182,8 @@ async def download(
             # MP3 transcode is CPU-bound — encode fragment batches across cores in parallel.
             content = stream_hls_mp3_parallel(direct_url, extra_headers=cdn_headers)
         else:
-            # Download HLS fragments in parallel, then ffmpeg muxes to MP4.
-            content = stream_hls_concurrent(direct_url, audio_only=False, extra_headers=cdn_headers)
+            # M4A copies audio; MP4 muxes video — both download fragments in parallel.
+            content = stream_hls_concurrent(direct_url, audio_only=fmt.ext == "m4a", extra_headers=cdn_headers)
     else:
         direct_url = fmt.direct_url or fmt.audio_url or fmt.video_url
         content = stream_direct(direct_url, cdn_headers)

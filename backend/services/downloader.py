@@ -72,22 +72,32 @@ async def stream_direct(url: str, extra_headers: dict | None = None) -> AsyncGen
 
 
 async def stream_audio_extract(fmt: Format) -> AsyncGenerator[bytes, None]:
-    """Let ffmpeg fetch the URL directly and extract MP3 — no temp file, streams immediately."""
-    url = fmt.direct_url or fmt.video_url
+    """Pull audio from a video URL via ffmpeg — MP3 (transcode) or M4A (stream copy).
+
+    YouTube CDN URLs are routed through the local proxy so the source download isn't
+    throttled; other platforms' URLs are fetched by ffmpeg directly with CDN headers.
+    """
+    import urllib.parse
+
+    url = fmt.direct_url or fmt.audio_url or fmt.video_url
     extra_headers = fmt.http_headers or {}
 
     cmd = ["ffmpeg", "-y"]
-    if extra_headers:
+    if "googlevideo.com" in url:
+        url = f"http://localhost:8006/api/cdnproxy?url={urllib.parse.quote(url, safe='')}"
+    elif extra_headers:
         header_str = "".join(f"{k}: {v}\r\n" for k, v in extra_headers.items())
         cmd += ["-headers", header_str]
-    cmd += [
-        "-i", url,
-        "-vn",
-        "-acodec", "libmp3lame",
-        "-q:a", "2",
-        "-f", "mp3",
-        "pipe:1",
-    ]
+    cmd += ["-i", url, "-vn"]
+
+    if fmt.ext == "m4a":
+        # Copy the AAC stream untouched — no transcode, so it's I/O-bound (fast).
+        # frag_duration fragments by time (audio has no keyframes to trigger flushing).
+        cmd += ["-c:a", "copy", "-movflags", "frag_keyframe+empty_moov",
+                "-frag_duration", "1000000", "-f", "mp4"]
+    else:
+        cmd += ["-acodec", "libmp3lame", "-q:a", "2", "-f", "mp3"]
+    cmd += ["pipe:1"]
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -186,7 +196,10 @@ async def stream_hls_concurrent(playlist_url: str, audio_only: bool = False,
         return
 
     if audio_only:
-        ff_args = ["-vn", "-acodec", "libmp3lame", "-q:a", "2", "-f", "mp3"]
+        # M4A: copy the AAC audio out of the TS fragments (no transcode → fast).
+        # frag_duration fragments by time (audio has no keyframes to trigger flushing).
+        ff_args = ["-vn", "-c:a", "copy", "-bsf:a", "aac_adtstoasc",
+                   "-movflags", "frag_keyframe+empty_moov", "-frag_duration", "1000000", "-f", "mp4"]
     else:
         ff_args = ["-c", "copy", "-bsf:a", "aac_adtstoasc",
                    "-movflags", "frag_keyframe+empty_moov", "-f", "mp4"]
