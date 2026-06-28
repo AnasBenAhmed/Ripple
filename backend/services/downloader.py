@@ -250,6 +250,7 @@ async def stream_hls_concurrent(playlist_url: str, audio_only: bool = False,
 
 MP3_BATCH_FRAGMENTS = 24    # HLS fragments encoded together per ffmpeg worker
 MP3_WORKERS = 6             # parallel mp3 encoders (libmp3lame is single-threaded)
+MP3_DOWNLOAD_CONCURRENCY = 24  # aggregate fragment downloads (Twitch CDN sweet spot)
 
 
 async def stream_hls_mp3_parallel(playlist_url: str,
@@ -258,8 +259,9 @@ async def stream_hls_mp3_parallel(playlist_url: str,
 
     A single libmp3lame is single-threaded (~the slow part vs an MP4 stream copy),
     so we split the fragments into batches, encode batches in parallel, and stream
-    the resulting MP3 segments in order. Each batch covers whole fragments, so the
-    audio stays continuous.
+    the resulting MP3 segments in order. Fragment downloads share one client and a
+    global concurrency pool so the encoders stay fed. Each batch covers whole
+    fragments, so the audio stays continuous.
     """
     base_headers = {**(extra_headers or {}), **_CDN_HEADERS}
 
@@ -268,62 +270,58 @@ async def stream_hls_mp3_parallel(playlist_url: str,
         r.raise_for_status()
         init, frags = _parse_hls_segments(r.text, str(r.url))
 
-    if not frags:
-        async for chunk in stream_ffmpeg_url(playlist_url, audio_only=True, extra_headers=extra_headers):
-            yield chunk
-        return
+        if not frags:
+            async for chunk in stream_ffmpeg_url(playlist_url, audio_only=True, extra_headers=extra_headers):
+                yield chunk
+            return
 
-    init_bytes = b""
-    if init:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
+        init_bytes = b""
+        if init:
             ir = await client.get(init, headers=base_headers)
             ir.raise_for_status()
             init_bytes = ir.content
 
-    batches = [frags[i:i + MP3_BATCH_FRAGMENTS] for i in range(0, len(frags), MP3_BATCH_FRAGMENTS)]
+        batches = [frags[i:i + MP3_BATCH_FRAGMENTS] for i in range(0, len(frags), MP3_BATCH_FRAGMENTS)]
+        dl_sem = asyncio.Semaphore(MP3_DOWNLOAD_CONCURRENCY)
 
-    async def encode_batch(urls: list[str]) -> bytes:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
-            sem = asyncio.Semaphore(HLS_CONCURRENCY)
+        async def fetch(u: str) -> bytes:
+            async with dl_sem:
+                for attempt in range(3):
+                    try:
+                        resp = await client.get(u, headers=base_headers)
+                        resp.raise_for_status()
+                        return resp.content
+                    except httpx.HTTPError:
+                        if attempt == 2:
+                            raise
+                        await asyncio.sleep(0.4)
+                return b""
 
-            async def fetch(u: str) -> bytes:
-                async with sem:
-                    for attempt in range(3):
-                        try:
-                            resp = await client.get(u, headers=base_headers)
-                            resp.raise_for_status()
-                            return resp.content
-                        except httpx.HTTPError:
-                            if attempt == 2:
-                                raise
-                            await asyncio.sleep(0.4)
-                    return b""
-
+        async def encode_batch(urls: list[str]) -> bytes:
             datas = await asyncio.gather(*[fetch(u) for u in urls])
+            payload = init_bytes + b"".join(datas)
+            # -write_xing 0: no per-segment VBR header, so the segments concatenate cleanly.
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-y", "-i", "pipe:0", "-vn",
+                "-acodec", "libmp3lame", "-q:a", "2", "-write_xing", "0", "-f", "mp3", "pipe:1",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            out, _ = await proc.communicate(payload)
+            return out
 
-        payload = init_bytes + b"".join(datas)
-        # -write_xing 0: no per-segment VBR header, so the segments concatenate cleanly.
-        proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-y", "-i", "pipe:0", "-vn",
-            "-acodec", "libmp3lame", "-q:a", "2", "-write_xing", "0", "-f", "mp3", "pipe:1",
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        out, _ = await proc.communicate(payload)
-        return out
-
-    total = len(batches)
-    tasks: dict[int, asyncio.Task] = {
-        i: asyncio.create_task(encode_batch(batches[i])) for i in range(min(MP3_WORKERS, total))
-    }
-    try:
-        for i in range(total):
-            data = await tasks.pop(i)
-            nxt = i + MP3_WORKERS
-            if nxt < total:
-                tasks[nxt] = asyncio.create_task(encode_batch(batches[nxt]))
-            yield data
-    finally:
-        for t in tasks.values():
-            t.cancel()
+        total = len(batches)
+        tasks: dict[int, asyncio.Task] = {
+            i: asyncio.create_task(encode_batch(batches[i])) for i in range(min(MP3_WORKERS, total))
+        }
+        try:
+            for i in range(total):
+                data = await tasks.pop(i)
+                nxt = i + MP3_WORKERS
+                if nxt < total:
+                    tasks[nxt] = asyncio.create_task(encode_batch(batches[nxt]))
+                yield data
+        finally:
+            for t in tasks.values():
+                t.cancel()
