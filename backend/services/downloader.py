@@ -283,6 +283,7 @@ async def stream_hls_mp3_parallel(playlist_url: str,
 
         batches = [frags[i:i + MP3_BATCH_FRAGMENTS] for i in range(0, len(frags), MP3_BATCH_FRAGMENTS)]
         dl_sem = asyncio.Semaphore(MP3_DOWNLOAD_CONCURRENCY)
+        active_procs: set = set()
 
         async def fetch(u: str) -> bytes:
             async with dl_sem:
@@ -308,8 +309,17 @@ async def stream_hls_mp3_parallel(playlist_url: str,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            out, _ = await proc.communicate(payload)
-            return out
+            active_procs.add(proc)
+            try:
+                out, _ = await proc.communicate(payload)
+                return out
+            finally:
+                active_procs.discard(proc)
+                if proc.returncode is None:
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
 
         total = len(batches)
         tasks: dict[int, asyncio.Task] = {
@@ -323,5 +333,12 @@ async def stream_hls_mp3_parallel(playlist_url: str,
                     tasks[nxt] = asyncio.create_task(encode_batch(batches[nxt]))
                 yield data
         finally:
+            # On disconnect: cancel pending tasks and kill every in-flight ffmpeg.
             for t in tasks.values():
                 t.cancel()
+            for p in list(active_procs):
+                if p.returncode is None:
+                    try:
+                        p.kill()
+                    except ProcessLookupError:
+                        pass
