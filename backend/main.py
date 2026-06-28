@@ -175,9 +175,13 @@ async def download(
     elif fmt.needs_audio_extract:
         content = stream_audio_extract(fmt)
     elif fmt.is_hls:
-        # Download HLS fragments in parallel, then ffmpeg muxes to MP4 / extracts MP3.
         direct_url = fmt.direct_url or fmt.audio_url or fmt.video_url
-        content = stream_hls_concurrent(direct_url, audio_only=fmt.ext == "mp3", extra_headers=cdn_headers)
+        if fmt.ext == "mp3":
+            # MP3 transcode is CPU-bound — encode fragment batches across cores in parallel.
+            content = stream_hls_mp3_parallel(direct_url, extra_headers=cdn_headers)
+        else:
+            # Download HLS fragments in parallel, then ffmpeg muxes to MP4.
+            content = stream_hls_concurrent(direct_url, audio_only=False, extra_headers=cdn_headers)
     else:
         direct_url = fmt.direct_url or fmt.audio_url or fmt.video_url
         content = stream_direct(direct_url, cdn_headers)
