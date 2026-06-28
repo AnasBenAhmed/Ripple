@@ -1,5 +1,5 @@
 <!-- ============ HEADER BANNER ============ -->
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:E11B22,100:E0A82E&height=220&section=header&text=Ripple&fontSize=85&fontColor=ffffff&fontAlignY=38&desc=Video%20and%20Audio%20Downloader&descSize=18&descAlignY=60&descColor=ffffff" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:E11B22,100:E0A82E&height=240&section=header&text=Ripple&fontSize=85&fontColor=ffffff&fontAlignY=36&desc=Video%20and%20Audio%20Downloader&descSize=18&descAlignY=72&descColor=ffffff" width="100%"/>
 
 <!-- ============ BADGES ============ -->
 <p align="center">
@@ -159,9 +159,28 @@ npm run dev
   <code>ffmpeg</code> handles muxing and MP3 extraction on the fly — nothing is written to disk on the server.
 </p>
 
+<!-- divider -->
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:E0A82E,100:E11B22&height=4" width="100%"/>
+
 <!-- ============ DISCLAIMER ============ -->
-> [!NOTE]
-> Ripple is a personal project for downloading content you have the right to access. Respect each platform's Terms of Service and creators' copyright.
+<h2 align="center">⚖️ Disclaimer</h2>
+
+<p align="center">
+  Ripple is an independent, open-source project. It is <b>not affiliated with, endorsed by, sponsored by,<br/>
+  or associated with</b> YouTube, Google LLC, Meta Platforms / Instagram, TikTok / ByteDance,<br/>
+  or Twitch / Amazon. All product names, logos, trademarks, and brands are the property of their<br/>
+  respective owners and are used for identification purposes only.
+</p>
+
+<p align="center">
+  This software is provided for <b>personal, educational use</b> — to download content you own or have the<br/>
+  right to access. Users are solely responsible for how they use it and for complying with each platform's<br/>
+  Terms of Service and all applicable copyright laws. The author accepts no liability for misuse.
+</p>
+
+<p align="center">
+  <sub>© 2026 Anas Ben Ahmed · Provided "as is", without warranty of any kind.</sub>
+</p>
 
 <!-- ============ FOOTER WAVE ============ -->
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0:E0A82E,100:E11B22&height=160&section=footer&text=Built%20by%20Anas%20Ben%20Ahmed&fontSize=22&fontColor=ffffff&fontAlignY=72&desc=Paste%20.%20Pick%20.%20Download&descSize=14&descAlignY=88&descColor=ffffff" width="100%"/>
