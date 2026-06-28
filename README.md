@@ -66,21 +66,30 @@
   <tr>
     <td width="50%" valign="top">
       <h3>▶️ YouTube</h3>
-      <p>Videos &amp; Shorts<br/>MP4 — 1080p / 720p / 480p / 360p<br/>MP3 audio extraction</p>
+      <p><b>Videos &amp; Shorts</b><br/>
+      🎬 MP4 — 1080p / 720p / 480p / 360p<br/>
+      🎵 MP3 — audio extraction</p>
     </td>
     <td width="50%" valign="top">
       <h3>📸 Instagram</h3>
-      <p>Reels, Posts &amp; Carousels<br/>Video (MP4) + Audio (MP3)<br/>Image downloads</p>
+      <p><b>Reels, Posts &amp; Carousels</b><br/>
+      🎬 MP4 — video<br/>
+      🎵 MP3 — audio<br/>
+      🖼️ JPG — photos &amp; carousel slides</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
       <h3>🎵 TikTok</h3>
-      <p>Videos — watermark-free<br/>MP4 + MP3 audio</p>
+      <p><b>Videos &amp; Slideshows</b><br/>
+      🎬 MP4 — watermark-free, source quality<br/>
+      🎵 MP3 — audio</p>
     </td>
     <td width="50%" valign="top">
       <h3>🟣 Twitch</h3>
-      <p>Clips &amp; VODs<br/>MP4 video</p>
+      <p><b>Clips &amp; VODs</b><br/>
+      🎬 MP4 — up to 1080p60, full quality ladder<br/>
+      🎵 MP3 — audio</p>
     </td>
   </tr>
 </table>
