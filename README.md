@@ -7,7 +7,7 @@
   &nbsp;
   <img src="https://img.shields.io/badge/Built%20From%20Scratch-E0A82E?style=for-the-badge&logo=rocket&logoColor=white"/>
   &nbsp;
-  <img src="https://img.shields.io/badge/Self--Hosted%20%26%20Private-181717?style=for-the-badge&logo=letsencrypt&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Self--Hosted-181717?style=for-the-badge&logo=letsencrypt&logoColor=white"/>
 </p>
 
 <!-- ============ ANIMATED TAGLINE ============ -->
