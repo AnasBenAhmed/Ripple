@@ -248,8 +248,8 @@ async def stream_hls_concurrent(playlist_url: str, audio_only: bool = False,
                 pass
 
 
-MP3_BATCH_FRAGMENTS = 16    # HLS fragments encoded together per ffmpeg worker
-MP3_WORKERS = 10            # parallel mp3 encoders (libmp3lame is single-threaded)
+MP3_BATCH_FRAGMENTS = 24    # HLS fragments encoded together per ffmpeg worker (fewer = more seams)
+MP3_WORKERS = 6             # parallel mp3 encoders (libmp3lame is single-threaded)
 MP3_DOWNLOAD_CONCURRENCY = 24  # aggregate fragment downloads (Twitch CDN sweet spot)
 
 
