@@ -76,8 +76,8 @@ class YouTubeExtractor(BaseExtractor):
         return visitor_data
 
     async def _fetch_player(self, video_id: str, visitor_data: str) -> dict:
-        # ANDROID_VR (Oculus Quest 3) — yt-dlp's primary default client.
-        # Works without poToken when a valid visitorData is supplied.
+        # ANDROID_VR (Oculus Quest 3) InnerTube client — returns unthrottled
+        # adaptive formats without a poToken when a valid visitorData is supplied.
         payload = {
             "videoId": video_id,
             "context": {

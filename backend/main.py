@@ -7,7 +7,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from services import router as media_router
-from services.downloader import READ_SIZE, CHUNK_SIZE, _CDN_HEADERS, stream_merged, stream_direct, stream_audio_extract, stream_ffmpeg_url, stream_hls_audio_ytdlp
+from services.downloader import READ_SIZE, CHUNK_SIZE, _CDN_HEADERS, stream_merged, stream_direct, stream_audio_extract, stream_ffmpeg_url
 from extractors.base import Format
 
 app = FastAPI(title="Ripple API", version="1.0.0")
@@ -176,21 +176,13 @@ async def download(
             headers=response_headers,
         )
     elif fmt.is_hls:
-        if fmt.ext == "mp3":
-            # yt-dlp --concurrent-fragments downloads 4 segments simultaneously,
-            # eliminating the serial RTT overhead that kills speed on high-latency connections
-            return StreamingResponse(
-                content=stream_hls_audio_ytdlp(url),
-                media_type=media_type,
-                headers=response_headers,
-            )
-        else:
-            direct_url = fmt.direct_url or fmt.audio_url or fmt.video_url
-            return StreamingResponse(
-                content=stream_ffmpeg_url(direct_url, audio_only=False, extra_headers=cdn_headers),
-                media_type=media_type,
-                headers=response_headers,
-            )
+        # ffmpeg pulls the HLS playlist directly and either remuxes to MP4 or extracts MP3.
+        direct_url = fmt.direct_url or fmt.audio_url or fmt.video_url
+        return StreamingResponse(
+            content=stream_ffmpeg_url(direct_url, audio_only=fmt.ext == "mp3", extra_headers=cdn_headers),
+            media_type=media_type,
+            headers=response_headers,
+        )
     else:
         direct_url = fmt.direct_url or fmt.audio_url or fmt.video_url
         return StreamingResponse(

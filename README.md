@@ -1,5 +1,5 @@
 <!-- ============ HEADER BANNER ============ -->
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:E11B22,100:E0A82E&height=240&section=header&text=Ripple&fontSize=85&fontColor=ffffff&fontAlignY=36&desc=Video%20and%20Audio%20Downloader&descSize=18&descAlignY=72&descColor=ffffff" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:E11B22,100:E0A82E&height=230&section=header&text=Ripple&fontSize=85&fontColor=ffffff&fontAlignY=40&desc=Video%20and%20Audio%20Downloader&descSize=18&descAlignY=64&descColor=ffffff" width="100%"/>
 
 <!-- ============ BADGES ============ -->
 <p align="center">
@@ -7,7 +7,7 @@
   &nbsp;
   <img src="https://img.shields.io/badge/Built%20From%20Scratch-E0A82E?style=for-the-badge&logo=rocket&logoColor=white"/>
   &nbsp;
-  <img src="https://img.shields.io/badge/No%20yt--dlp%20Library-181717?style=for-the-badge&logo=python&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Self--Hosted%20%26%20Private-181717?style=for-the-badge&logo=letsencrypt&logoColor=white"/>
 </p>
 
 <!-- ============ ANIMATED TAGLINE ============ -->
@@ -36,8 +36,8 @@
 
 <p align="center">
   Built <b>from scratch</b>: a fast Python/FastAPI backend that talks directly to each platform's own<br/>
-  endpoints, paired with a clean Next.js queue-based UI. No <code>yt-dlp</code> library, no download wrappers —<br/>
-  just raw HTTP and <code>ffmpeg</code>.
+  endpoints, paired with a clean Next.js queue-based UI — lean, dependency-light, and muxing<br/>
+  everything on the fly with <code>ffmpeg</code>.
 </p>
 
 <!-- divider -->
@@ -52,7 +52,7 @@
 ⚡ &nbsp;<b>Fast downloads</b> — bypasses YouTube's per-connection CDN throttling with chunked range requests<br/><br/>
 📊 &nbsp;<b>Live progress</b> — real-time speed and percentage for every item in the queue<br/><br/>
 🔓 &nbsp;<b>No login</b> — pulls public content straight from each platform's web API<br/><br/>
-🧱 &nbsp;<b>From scratch</b> — no <code>yt-dlp</code> library, no download wrappers, just HTTP + <code>ffmpeg</code>
+🧱 &nbsp;<b>From scratch</b> — direct platform extraction, no heavy download stack, just HTTP + <code>ffmpeg</code>
 </p>
 
 <!-- divider -->

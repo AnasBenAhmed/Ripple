@@ -1,5 +1,4 @@
 import asyncio
-import os
 from collections.abc import AsyncGenerator
 
 import httpx
@@ -13,7 +12,7 @@ _CDN_HEADERS = {"Accept-Encoding": "identity"}
 
 
 async def stream_direct(url: str, extra_headers: dict | None = None) -> AsyncGenerator[bytes, None]:
-    """Stream a direct URL. YouTube CDN uses sequential 10 MB Range chunks like yt-dlp."""
+    """Stream a direct URL. YouTube CDN uses sequential 10 MB Range chunks to avoid throttling."""
     import re
 
     base_headers = dict(extra_headers or {})
@@ -78,43 +77,6 @@ async def stream_audio_extract(fmt: Format) -> AsyncGenerator[bytes, None]:
             break
         yield chunk
     await proc.wait()
-
-
-async def stream_hls_audio_ytdlp(url: str) -> AsyncGenerator[bytes, None]:
-    """Download HLS with yt-dlp (4 concurrent fragments) then convert to MP3 via ffmpeg.
-    Must use os.pipe() file descriptors — asyncio StreamReader cannot be used as subprocess stdin."""
-    r_fd, w_fd = os.pipe()
-
-    yt_proc = await asyncio.create_subprocess_exec(
-        "yt-dlp",
-        "--concurrent-fragments", "4",
-        "-f", "worst",
-        "--no-warnings", "--quiet",
-        "-o", "-",
-        url,
-        stdout=w_fd,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    os.close(w_fd)  # parent doesn't write; close so ffmpeg sees EOF when yt-dlp exits
-
-    ff_proc = await asyncio.create_subprocess_exec(
-        "ffmpeg", "-y",
-        "-i", "pipe:0",
-        "-vn", "-acodec", "libmp3lame", "-q:a", "2",
-        "-f", "mp3", "pipe:1",
-        stdin=r_fd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    os.close(r_fd)  # transferred to ffmpeg; parent closes its copy
-
-    while True:
-        chunk = await ff_proc.stdout.read(READ_SIZE)
-        if not chunk:
-            break
-        yield chunk
-
-    await asyncio.gather(yt_proc.wait(), ff_proc.wait())
 
 
 async def stream_ffmpeg_url(url: str, audio_only: bool = False,
