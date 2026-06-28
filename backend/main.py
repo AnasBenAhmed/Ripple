@@ -64,37 +64,6 @@ async def info(body: InfoRequest):
     )
 
 
-class InstagramSessionRequest(BaseModel):
-    session_id: str
-
-
-@app.post("/api/instagram/connect")
-async def instagram_connect(body: InstagramSessionRequest):
-    """Save Instagram sessionid cookie so yt-dlp can authenticate."""
-    sid = body.session_id.strip()
-    if not sid:
-        raise HTTPException(status_code=400, detail="session_id is required")
-
-    cookies_dir = os.path.join(os.path.dirname(__file__), "cookies")
-    os.makedirs(cookies_dir, exist_ok=True)
-    cookies_path = os.path.join(cookies_dir, "instagram.txt")
-
-    content = (
-        "# Netscape HTTP Cookie File\n"
-        f".instagram.com\tTRUE\t/\tTRUE\t9999999999\tsessionid\t{sid}\n"
-    )
-    with open(cookies_path, "w") as f:
-        f.write(content)
-
-    return {"status": "saved"}
-
-
-@app.get("/api/instagram/status")
-async def instagram_status():
-    cookies_path = os.path.join(os.path.dirname(__file__), "cookies", "instagram.txt")
-    return {"connected": os.path.exists(cookies_path)}
-
-
 @app.get("/api/thumbnail")
 async def thumbnail_proxy(url: str = Query(...)):
     """Proxy thumbnails that require a Referer or block cross-origin image loads."""
