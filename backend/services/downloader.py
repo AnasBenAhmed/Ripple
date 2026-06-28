@@ -1,45 +1,15 @@
 import asyncio
 import os
-import tempfile
 from collections.abc import AsyncGenerator
 
 import httpx
 
 from extractors.base import Format
 
-# yt-dlp uses 10 MB chunks for YouTube CDN (http_chunk_size = 10 << 20)
-CHUNK_SIZE = 10 * 1024 * 1024
-READ_SIZE  = 65536  # 64 KB streaming read size
+READ_SIZE = 65536           # 64 KB streaming read size
+CHUNK_SIZE = 10 * 1024 * 1024  # 10 MB Range chunks for YouTube CDN
 
-# yt-dlp disables content-encoding on CDN requests so Range byte offsets stay accurate
 _CDN_HEADERS = {"Accept-Encoding": "identity"}
-
-
-async def _download_chunked(url: str, extra_headers: dict | None = None) -> bytes:
-    """Download a URL using sequential 10 MB Range requests (yt-dlp's http_chunk_size approach)."""
-    import re
-    base = dict(extra_headers or {})
-    m = re.search(r'[?&]clen=(\d+)', url)
-    clen = int(m.group(1)) if m else None
-
-    async with httpx.AsyncClient(follow_redirects=True, timeout=120) as client:
-        if not clen:
-            r = await client.get(url, headers={**base, **_CDN_HEADERS})
-            r.raise_for_status()
-            return r.content
-
-        parts: list[bytes] = []
-        pos = 0
-        while pos < clen:
-            end = min(pos + CHUNK_SIZE - 1, clen - 1)
-            headers = {**base, **_CDN_HEADERS, "Range": f"bytes={pos}-{end}"}
-            r = await client.get(url, headers=headers)
-            r.raise_for_status()
-            chunk = r.content
-            parts.append(chunk)
-            pos += len(chunk)
-
-    return b"".join(parts)
 
 
 async def stream_direct(url: str, extra_headers: dict | None = None) -> AsyncGenerator[bytes, None]:
@@ -176,47 +146,31 @@ async def stream_ffmpeg_url(url: str, audio_only: bool = False,
     await proc.wait()
 
 
-async def stream_merged(fmt: Format, request_headers: dict | None = None) -> AsyncGenerator[bytes, None]:
-    """Download video+audio simultaneously (parallel tasks), merge with ffmpeg, stream MP4."""
-    h = fmt.http_headers or {}
-    video_data, audio_data = await asyncio.gather(
-        _download_chunked(fmt.video_url, h),
-        _download_chunked(fmt.audio_url, h),
+async def stream_merged(fmt: Format) -> AsyncGenerator[bytes, None]:
+    """ffmpeg pulls video+audio via local CDN proxy (Range chunks → fast) and muxes to browser."""
+    import urllib.parse
+
+    BASE = "http://localhost:8006"
+    video_proxy = f"{BASE}/api/cdnproxy?url={urllib.parse.quote(fmt.video_url, safe='')}"
+    audio_proxy = f"{BASE}/api/cdnproxy?url={urllib.parse.quote(fmt.audio_url, safe='')}"
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_proxy,
+        "-i", audio_proxy,
+        "-c", "copy",
+        "-movflags", "frag_keyframe+empty_moov",
+        "-f", "mp4",
+        "pipe:1",
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
     )
-
-    vf = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-    af = tempfile.NamedTemporaryFile(suffix=".m4a", delete=False)
-    try:
-        vf.write(video_data)
-        vf.close()
-        af.write(audio_data)
-        af.close()
-
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", vf.name,
-            "-i", af.name,
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-movflags", "frag_keyframe+empty_moov",
-            "-f", "mp4",
-            "pipe:1",
-        ]
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        while True:
-            chunk = await proc.stdout.read(READ_SIZE)
-            if not chunk:
-                break
-            yield chunk
-        await proc.wait()
-    finally:
-        vf_name = vf.name
-        af_name = af.name
-        if os.path.exists(vf_name):
-            os.unlink(vf_name)
-        if os.path.exists(af_name):
-            os.unlink(af_name)
+    while True:
+        chunk = await proc.stdout.read(READ_SIZE)
+        if not chunk:
+            break
+        yield chunk
+    await proc.wait()

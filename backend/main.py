@@ -1,13 +1,14 @@
+import os
 import re
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from services import router as media_router
-from services.downloader import stream_merged, stream_direct, stream_audio_extract, stream_ffmpeg_url, stream_hls_audio_ytdlp
+from services.downloader import READ_SIZE, CHUNK_SIZE, _CDN_HEADERS, stream_merged, stream_direct, stream_audio_extract, stream_ffmpeg_url, stream_hls_audio_ytdlp
 from extractors.base import Format
 
 app = FastAPI(title="Ripple API", version="1.0.0")
@@ -29,6 +30,7 @@ class FormatOut(BaseModel):
     label: str
     ext: str
     thumbnail: str | None = None
+    filesize: int | None = None
 
 
 class InfoResponse(BaseModel):
@@ -57,9 +59,40 @@ async def info(body: InfoRequest):
         title=media.title,
         thumbnail=media.thumbnail,
         platform=media.platform,
-        formats=[FormatOut(id=f.id, label=f.label, ext=f.ext, thumbnail=f.thumbnail) for f in media.formats],
+        formats=[FormatOut(id=f.id, label=f.label, ext=f.ext, thumbnail=f.thumbnail, filesize=f.filesize) for f in media.formats],
         duration=media.duration,
     )
+
+
+class InstagramSessionRequest(BaseModel):
+    session_id: str
+
+
+@app.post("/api/instagram/connect")
+async def instagram_connect(body: InstagramSessionRequest):
+    """Save Instagram sessionid cookie so yt-dlp can authenticate."""
+    sid = body.session_id.strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="session_id is required")
+
+    cookies_dir = os.path.join(os.path.dirname(__file__), "cookies")
+    os.makedirs(cookies_dir, exist_ok=True)
+    cookies_path = os.path.join(cookies_dir, "instagram.txt")
+
+    content = (
+        "# Netscape HTTP Cookie File\n"
+        f".instagram.com\tTRUE\t/\tTRUE\t9999999999\tsessionid\t{sid}\n"
+    )
+    with open(cookies_path, "w") as f:
+        f.write(content)
+
+    return {"status": "saved"}
+
+
+@app.get("/api/instagram/status")
+async def instagram_status():
+    cookies_path = os.path.join(os.path.dirname(__file__), "cookies", "instagram.txt")
+    return {"connected": os.path.exists(cookies_path)}
 
 
 @app.get("/api/thumbnail")
@@ -75,6 +108,36 @@ async def thumbnail_proxy(url: str = Query(...)):
             )
     except Exception:
         raise HTTPException(status_code=502, detail="Could not fetch thumbnail")
+
+
+@app.get("/api/cdnproxy")
+async def cdn_proxy(url: str = Query(...)):
+    """Proxy YouTube CDN URLs using 10 MB Range chunks to bypass per-connection throttling.
+    ffmpeg connects here (localhost, fast) instead of CDN directly (throttled)."""
+    m = re.search(r'[?&]clen=(\d+)', url)
+    clen = int(m.group(1)) if m else None
+
+    async def stream():
+        base = dict(_CDN_HEADERS)
+        async with httpx.AsyncClient(follow_redirects=True, timeout=120) as client:
+            if not clen:
+                async with client.stream("GET", url, headers=base) as r:
+                    r.raise_for_status()
+                    async for chunk in r.aiter_bytes(READ_SIZE):
+                        yield chunk
+                return
+            pos = 0
+            while pos < clen:
+                end = min(pos + CHUNK_SIZE - 1, clen - 1)
+                r = await client.get(url, headers={**base, "Range": f"bytes={pos}-{end}"})
+                r.raise_for_status()
+                data = r.content
+                for i in range(0, len(data), READ_SIZE):
+                    yield data[i:i + READ_SIZE]
+                pos += len(data)
+
+    headers = {"Content-Length": str(clen)} if clen else {}
+    return StreamingResponse(stream(), media_type="application/octet-stream", headers=headers)
 
 
 async def _head_filesize(url: str, extra_headers: dict) -> int | None:
@@ -117,10 +180,13 @@ async def download(
 
     cdn_headers = fmt.http_headers or {}
 
-    # Resolve Content-Length so browsers show download progress
-    filesize: int | None = fmt.filesize
-    if filesize is None and not fmt.needs_audio_extract:
-        if not fmt.is_hls:
+    # Resolve Content-Length so browsers show download progress.
+    # Merged streams (ffmpeg mux) produce output that differs from raw CDN clen sum —
+    # sending wrong Content-Length causes browsers to report "network error".
+    filesize: int | None = None
+    if not fmt.needs_merge and not fmt.needs_audio_extract and not fmt.is_hls:
+        filesize = fmt.filesize
+        if filesize is None:
             direct = fmt.direct_url or fmt.audio_url or fmt.video_url
             if direct:
                 filesize = await _head_filesize(direct, cdn_headers)
@@ -131,7 +197,7 @@ async def download(
 
     if fmt.needs_merge:
         return StreamingResponse(
-            content=stream_merged(fmt),
+            content=stream_merged(fmt),  # ffmpeg fetches CDN URLs + muxes inline
             media_type=media_type,
             headers=response_headers,
         )
