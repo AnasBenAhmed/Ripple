@@ -43,6 +43,16 @@
 <!-- divider -->
 <img src="https://capsule-render.vercel.app/api?type=rect&color=0:E0A82E,100:E11B22&height=4" width="100%"/>
 
+<!-- ============ PREVIEW ============ -->
+<h2 align="center">🖼️ Preview</h2>
+
+<p align="center">
+  <img src="screenshots/ripple-desktop.png" width="88%" alt="Ripple — clean, queue-based downloader UI" />
+</p>
+
+<!-- divider -->
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:E11B22,100:E0A82E&height=4" width="100%"/>
+
 <!-- ============ FEATURES ============ -->
 <h2 align="center">✨ Features</h2>
 
