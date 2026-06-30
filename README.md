@@ -8,6 +8,8 @@
   <img src="https://img.shields.io/badge/Built%20From%20Scratch-E0A82E?style=for-the-badge&logo=rocket&logoColor=white"/>
   &nbsp;
   <img src="https://img.shields.io/badge/Self--Hosted-181717?style=for-the-badge&logo=letsencrypt&logoColor=white"/>
+  &nbsp;
+  <img src="https://img.shields.io/badge/Tested%20with-pytest-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white"/>
 </p>
 
 <!-- ============ ANIMATED TAGLINE ============ -->
@@ -156,6 +158,27 @@ npm run dev
 
 <p align="center">
   Open <b>http://localhost:3000</b>, paste a link, and hit <b>Add to Queue</b>.
+</p>
+
+<!-- divider -->
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:E0A82E,100:E11B22&height=4" width="100%"/>
+
+<!-- ============ TESTS ============ -->
+<h2 align="center">🧪 Tests</h2>
+
+<p align="center">
+  The backend's URL routing — how each link is matched to the right platform extractor —<br/>
+  is covered by <b>pytest</b>. Pure logic, no network calls.
+</p>
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+pytest
+```
+
+<p align="center">
+  <b>26 tests</b> across the four extractors' <code>match()</code> rules and the router's dispatch.
 </p>
 
 <!-- divider -->
